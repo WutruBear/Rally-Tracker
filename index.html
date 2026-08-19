@@ -63,7 +63,7 @@ let roster = loadJSON("roster", []).map(p => ({
   alliance: (p.alliance || "").trim() || "Unassigned"
 }));
 let rallies = loadJSON("rallies", []);
-let expanded = {};
+
 let draft = {
   ally: { name: "", march: "", alliance: "" },
   enemy: { name: "", march: "", alliance: "" }
@@ -136,10 +136,6 @@ function clearRally(id) {
   persist();
   render();
 }
-function toggleExpanded(id) {
-  expanded[id] = !expanded[id];
-  render();
-}
 function adjustRally(id, delta) {
   const r = rallies.find(x => x.id === id);
   if (r) r.hitTime += delta * 1000;
@@ -195,7 +191,6 @@ function render() {
         return { ...p, startBy, secsUntilStart: (startBy - now) / 1000, followStartBy, secsUntilFollowStart: (followStartBy - now) / 1000 };
       })
       .sort((a, b) => a.startBy - b.startBy);
-    const isOpen = !!expanded[r.id];
     const isEnemy = r.team === "enemy";
 
     html += `<div class="card ${imminent ? "imminent" : ""}" style="border-color:${hasHit ? "#E1594F" : "#1D2523"};border-left:3px solid ${meta.accent};">
@@ -223,43 +218,40 @@ function render() {
       </div>`;
 
     if (others.length > 0) {
-      html += `<button class="sync-toggle" onclick="toggleExpanded(${r.id})">
+      html += `<div class="sync-toggle" style="cursor:default;">
         <span>👥</span>
         ${isEnemy ? "Sync same-time or follow-up hit" : "Sync others to this hit"}
-        <span style="display:inline-block;transform:${isOpen ? "rotate(180deg)" : "none"};transition:transform .15s;">▾</span>
-      </button>`;
+      </div>`;
 
-      if (isOpen) {
-        html += `<div style="margin-top:8px;border-top:1px solid #1D2523;padding-top:8px;">
-          <div class="sync-grid" style="grid-template-columns:${isEnemy ? "1fr 84px 84px" : "1fr 84px"};">`;
-        if (isEnemy) {
-          html += `<span></span>
-            <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">SAME TIME</span>
-            <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">FOLLOW-UP</span>`;
-        }
-        others.forEach(p => {
-          const pMeta = TEAM_META[p.team];
-          const late = p.secsUntilStart < -1;
-          const startNow = p.secsUntilStart >= -1 && p.secsUntilStart <= 0;
-          const followLate = p.secsUntilFollowStart < -1;
-          const followStartNow = p.secsUntilFollowStart >= -1 && p.secsUntilFollowStart <= 0;
-          html += `
-            <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
-              <span class="dot" style="background:${pMeta.accent};"></span>
-              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</span>
-              <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
-            </div>
-            <div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
-              ${startNow ? "now" : fmtMMSS(p.secsUntilStart)}
-            </div>`;
-          if (isEnemy) {
-            html += `<div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${followLate ? "#E1594F" : followStartNow ? "#3FD6C7" : "#8A948F"};">
-              ${followStartNow ? "now" : fmtMMSS(p.secsUntilFollowStart)}
-            </div>`;
-          }
-        });
-        html += `</div></div>`;
+      html += `<div style="margin-top:8px;border-top:1px solid #1D2523;padding-top:8px;">
+        <div class="sync-grid" style="grid-template-columns:${isEnemy ? "1fr 84px 84px" : "1fr 84px"};">`;
+      if (isEnemy) {
+        html += `<span></span>
+          <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">SAME TIME</span>
+          <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">FOLLOW-UP</span>`;
       }
+      others.forEach(p => {
+        const pMeta = TEAM_META[p.team];
+        const late = p.secsUntilStart < -1;
+        const startNow = p.secsUntilStart >= -1 && p.secsUntilStart <= 0;
+        const followLate = p.secsUntilFollowStart < -1;
+        const followStartNow = p.secsUntilFollowStart >= -1 && p.secsUntilFollowStart <= 0;
+        html += `
+          <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
+            <span class="dot" style="background:${pMeta.accent};"></span>
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</span>
+            <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
+          </div>
+          <div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
+            ${startNow ? "now" : fmtMMSS(p.secsUntilStart)}
+          </div>`;
+        if (isEnemy) {
+          html += `<div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${followLate ? "#E1594F" : followStartNow ? "#3FD6C7" : "#8A948F"};">
+            ${followStartNow ? "now" : fmtMMSS(p.secsUntilFollowStart)}
+          </div>`;
+        }
+      });
+      html += `</div></div>`;
     }
     html += `</div>`;
   });
