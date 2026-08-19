@@ -58,10 +58,16 @@ function saveJSON(key, value) {
 }
 
 // ---- state ----
-let roster = loadJSON("roster", []);
+let roster = loadJSON("roster", []).map(p => ({
+  ...p,
+  alliance: (p.alliance || "").trim() || "Unassigned"
+}));
 let rallies = loadJSON("rallies", []);
 let expanded = {};
-let draft = { ally: { name: "", march: "" }, enemy: { name: "", march: "" } };
+let draft = {
+  ally: { name: "", march: "", alliance: "" },
+  enemy: { name: "", march: "", alliance: "" }
+};
 let idCounter = 1 + Math.max(0, ...roster.map(p => p.id), ...rallies.map(r => r.id));
 function nextId() { return idCounter++; }
 
@@ -78,8 +84,14 @@ function fmtMMSS(totalSeconds) {
   const s = t % 60;
   return sign + m + ":" + String(s).padStart(2, "0");
 }
-function fmtClock(date) {
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function fmtClockUTC(date) {
+  return date.toLocaleTimeString("en-GB", {
+    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
 }
 function esc(str) {
   const d = document.createElement("div");
@@ -92,9 +104,11 @@ function addPerson(team) {
   const name = draft[team].name.trim();
   const seconds = parseInt(draft[team].march, 10);
   if (!name || !seconds || seconds <= 0) return;
-  roster.push({ id: nextId(), name, team, marchTime: seconds });
+  const alliance = (draft[team].alliance || "").trim() || "Unassigned";
+  roster.push({ id: nextId(), name, team, alliance, marchTime: seconds });
   draft[team].name = "";
   draft[team].march = "";
+  draft[team].alliance = "";
   persist();
   render();
 }
@@ -108,7 +122,11 @@ function startRally(personId) {
   if (!person) return;
   const startTime = Date.now();
   const hitTime = startTime + (RALLY_BUFFER + person.marchTime) * 1000;
-  rallies.push({ id: nextId(), personId: person.id, name: person.name, team: person.team, marchTime: person.marchTime, startTime, hitTime });
+  rallies.push({
+    id: nextId(), personId: person.id, name: person.name, team: person.team,
+    alliance: person.alliance || "Unassigned", marchTime: person.marchTime,
+    startTime, hitTime
+  });
   persist();
   render();
 }
@@ -148,7 +166,7 @@ function render() {
       <span style="font-size:20px;">📡</span>
       <div>
         <div class="display" style="font-size:22px;color:#F2A93B;line-height:1;">RALLY TRACKER</div>
-        <div class="mono" style="font-size:11px;color:#6B7570;margin-top:2px;">impact = start + 5:00 + march (secs)</div>
+        <div class="mono" style="font-size:11px;color:#6B7570;margin-top:2px;">Castle battle</div>
       </div>
     </div>`;
 
@@ -183,8 +201,9 @@ function render() {
     html += `<div class="card ${imminent ? "imminent" : ""}" style="border-color:${hasHit ? "#E1594F" : "#1D2523"};border-left:3px solid ${meta.accent};">
       <div class="row" style="justify-content:space-between;gap:10px;">
         <div style="min-width:0;">
-          <div style="font-size:14px;font-weight:600;color:#E8ECE9;">${esc(r.name)} <span style="font-size:11px;color:${meta.accent};margin-left:6px;">${meta.label}</span></div>
-          <div class="mono" style="font-size:11px;color:#6B7570;margin-top:2px;">hits ${fmtClock(new Date(r.hitTime))}</div>
+          <div style="font-size:14px;font-weight:600;color:#E8ECE9;">${esc(r.name)} <span style="font-size:11px;color:${meta.accent};margin-left:6px;">${meta.label}</span>
+            <span style="font-size:10px;color:#8A948F;margin-left:5px;">· ${esc(r.alliance || "Unassigned")}</span></div>
+          <div class="mono" style="font-size:11px;color:#6B7570;margin-top:2px;">hits: UTC ${fmtClockUTC(new Date(r.hitTime))}</div>
         </div>
         <div class="row" style="gap:14px;">
           <div style="text-align:right;">
@@ -249,32 +268,53 @@ function render() {
   ["ally", "enemy"].forEach(team => {
     const meta = TEAM_META[team];
     const members = roster.filter(p => p.team === team);
+    const alliances = [...new Set(members.map(p => p.alliance || "Unassigned"))].sort((a, b) => {
+      if (a === "Unassigned") return 1;
+      if (b === "Unassigned") return -1;
+      return a.localeCompare(b);
+    });
+
     html += `<div style="padding:8px 16px 20px;">
       <div class="row" style="gap:8px;margin-bottom:10px;margin-top:8px;">
         <span>${meta.icon}</span>
         <div class="display" style="font-size:15px;color:${meta.accent};text-transform:uppercase;">${meta.label}</div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">`;
+      <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:12px;">`;
 
     if (members.length === 0) {
       html += `<div style="font-size:12.5px;color:#4A5450;padding:4px 2px;">No one added yet.</div>`;
     }
-    members.forEach(p => {
-      html += `<div class="row card" style="justify-content:space-between;padding:9px 12px;">
-        <div>
-          <div style="font-size:13.5px;font-weight:500;">${esc(p.name)}</div>
-          <div class="mono" style="font-size:11px;color:#6B7570;">march ${p.marchTime}s</div>
+
+    alliances.forEach(alliance => {
+      const allianceMembers = members.filter(p => (p.alliance || "Unassigned") === alliance);
+      html += `<div>
+        <div class="row" style="gap:6px;margin-bottom:6px;padding:4px 2px;">
+          <span style="font-size:12px;">🏳️</span>
+          <div class="display" style="font-size:11px;color:#8A948F;text-transform:uppercase;">${esc(alliance)}</div>
+          <span class="mono" style="font-size:9px;color:#4A5450;">${allianceMembers.length}</span>
         </div>
-        <div class="row" style="gap:6px;">
-          <button class="btn row" onclick="startRally(${p.id})" style="gap:5px;background:${meta.accent};color:#0B0F0E;border:none;border-radius:6px;padding:6px 10px;font-size:12.5px;font-weight:600;">▶ Start</button>
-          <button class="btn" onclick="removePerson(${p.id})" style="background:none;border:none;color:#4A5450;padding:4px;font-size:14px;">🗑</button>
-        </div>
-      </div>`;
+        <div style="display:flex;flex-direction:column;gap:6px;">`;
+
+      allianceMembers.forEach(p => {
+        html += `<div class="row card" style="justify-content:space-between;padding:9px 12px;">
+          <div>
+            <div style="font-size:13.5px;font-weight:500;">${esc(p.name)}</div>
+            <div class="mono" style="font-size:11px;color:#6B7570;">march ${p.marchTime}s</div>
+          </div>
+          <div class="row" style="gap:6px;">
+            <button class="btn row" onclick="startRally(${p.id})" style="gap:5px;background:${meta.accent};color:#0B0F0E;border:none;border-radius:6px;padding:6px 10px;font-size:12.5px;font-weight:600;">▶ Start</button>
+            <button class="btn" onclick="removePerson(${p.id})" style="background:none;border:none;color:#4A5450;padding:4px;font-size:14px;">🗑</button>
+          </div>
+        </div>`;
+      });
+
+      html += `</div></div>`;
     });
 
     html += `</div>
       <div class="row" style="gap:6px;">
         <input id="name-${team}" placeholder="Name" value="${esc(draft[team].name)}" oninput="onDraftInput(this,'${team}','name')" onkeydown="handleEnter(event,'${team}')" style="flex:1;background:#121815;border:1px solid #1D2523;border-radius:6px;padding:8px 10px;color:#E8ECE9;font-size:13px;outline:none;" />
+        <input id="alliance-${team}" placeholder="Alliance" value="${esc(draft[team].alliance)}" oninput="onDraftInput(this,'${team}','alliance')" onkeydown="handleEnter(event,'${team}')" style="width:105px;background:#121815;border:1px solid #1D2523;border-radius:6px;padding:8px 10px;color:#E8ECE9;font-size:13px;outline:none;" />
         <input id="march-${team}" placeholder="secs" inputmode="numeric" value="${esc(draft[team].march)}" oninput="onDraftInput(this,'${team}','march')" onkeydown="handleEnter(event,'${team}')" style="width:60px;background:#121815;border:1px solid #1D2523;border-radius:6px;padding:8px 10px;color:#E8ECE9;font-size:13px;outline:none;" />
         <button class="btn" onclick="addPerson('${team}')" style="background:#1D2523;border:1px solid #2A3330;border-radius:6px;padding:8px 10px;color:${meta.accent};font-size:16px;">+</button>
       </div>
