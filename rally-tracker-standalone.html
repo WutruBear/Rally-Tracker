@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rally Tracker</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0B0F0E; color: #E8ECE9;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+  }
+  .mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; }
+  .display { font-weight: 700; letter-spacing: 0.04em; }
+  input::placeholder { color: #4A5450; }
+  input, button { font-family: inherit; }
+  @keyframes pulseRed {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(225,89,79,0.5); }
+    50% { box-shadow: 0 0 0 8px rgba(225,89,79,0); }
+  }
+  .imminent { animation: pulseRed 1.2s infinite; }
+  .row { display: flex; align-items: center; }
+  .btn { cursor: pointer; }
+  .card {
+    background: #121815; border: 1px solid #1D2523; border-radius: 8px; padding: 10px 12px;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .sync-toggle {
+    display: flex; align-items: center; gap: 6px; margin-top: 8px; background: none;
+    border: none; color: #6B7570; cursor: pointer; font-size: 11.5px; padding: 4px 0 0;
+  }
+  .sync-grid { display: grid; column-gap: 8px; row-gap: 5px; }
+  .adjbtn {
+    background: #1D2523; border: 1px solid #2A3330; border-radius: 4px; color: #8A948F;
+    cursor: pointer; font-size: 11px; font-weight: 700; width: 22px; height: 20px; line-height: 1; padding: 0;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+const RALLY_BUFFER = 5 * 60;
+const TEAM_META = {
+  ally: { label: "OUR SQUAD", accent: "#3FD6C7", icon: "🛡️" },
+  enemy: { label: "ENEMY SQUAD", accent: "#E1594F", icon: "⚔️" },
+};
+
+// ---- storage ----
+function loadJSON(key, fallback) {
+  try {
+    const v = localStorage.getItem("rallytracker:" + key);
+    return v === null ? fallback : JSON.parse(v);
+  } catch (e) { return fallback; }
+}
+function saveJSON(key, value) {
+  try { localStorage.setItem("rallytracker:" + key, JSON.stringify(value)); } catch (e) {}
+}
+
+// ---- state ----
+let roster = loadJSON("roster", []);
+let rallies = loadJSON("rallies", []);
+let expanded = {};
+let draft = { ally: { name: "", march: "" }, enemy: { name: "", march: "" } };
+let idCounter = 1 + Math.max(0, ...roster.map(p => p.id), ...rallies.map(r => r.id));
+function nextId() { return idCounter++; }
+
+function persist() {
+  saveJSON("roster", roster);
+  saveJSON("rallies", rallies);
+}
+
+// ---- helpers ----
+function fmtMMSS(totalSeconds) {
+  const sign = totalSeconds < 0 ? "-" : "";
+  const t = Math.abs(Math.round(totalSeconds));
+  const m = Math.floor(t / 60);
+  const s = t % 60;
+  return sign + m + ":" + String(s).padStart(2, "0");
+}
+function fmtClock(date) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function esc(str) {
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ---- actions ----
+function addPerson(team) {
+  const name = draft[team].name.trim();
+  const seconds = parseInt(draft[team].march, 10);
+  if (!name || !seconds || seconds <= 0) return;
+  roster.push({ id: nextId(), name, team, marchTime: seconds });
+  draft[team].name = "";
+  draft[team].march = "";
+  persist();
+  render();
+}
+function removePerson(id) {
+  roster = roster.filter(p => p.id !== id);
+  persist();
+  render();
+}
+function startRally(personId) {
+  const person = roster.find(p => p.id === personId);
+  if (!person) return;
+  const startTime = Date.now();
+  const hitTime = startTime + (RALLY_BUFFER + person.marchTime) * 1000;
+  rallies.push({ id: nextId(), personId: person.id, name: person.name, team: person.team, marchTime: person.marchTime, startTime, hitTime });
+  persist();
+  render();
+}
+function clearRally(id) {
+  rallies = rallies.filter(x => x.id !== id);
+  delete expanded[id];
+  persist();
+  render();
+}
+function toggleExpanded(id) {
+  expanded[id] = !expanded[id];
+  render();
+}
+function adjustRally(id, delta) {
+  const r = rallies.find(x => x.id === id);
+  if (r) r.hitTime += delta * 1000;
+  persist();
+  render();
+}
+function onDraftInput(el, team, field) {
+  draft[team][field] = el.value;
+}
+function handleEnter(e, team) {
+  if (e.key === "Enter") addPerson(team);
+}
+
+// ---- render ----
+function render() {
+  const now = Date.now();
+  rallies = rallies.filter(x => now - x.hitTime < 2 * 60 * 1000);
+  const activeSorted = [...rallies].sort((a, b) => a.hitTime - b.hitTime);
+
+  let html = "";
+
+  html += `
+    <div class="row" style="border-bottom:1px solid #1D2523;padding:20px 16px;gap:10px;">
+      <span style="font-size:20px;">📡</span>
+      <div>
+        <div class="display" style="font-size:22px;color:#F2A93B;line-height:1;">RALLY TRACKER</div>
+        <div class="mono" style="font-size:11px;color:#6B7570;margin-top:2px;">impact = start + 5:00 + march (secs)</div>
+      </div>
+    </div>`;
+
+  html += `<div style="padding:16px;">
+    <div class="display" style="font-size:14px;color:#8A948F;margin-bottom:10px;text-transform:uppercase;">Incoming (${activeSorted.length})</div>`;
+
+  if (activeSorted.length === 0) {
+    html += `<div style="padding:18px 14px;background:#121815;border:1px dashed #262E2B;border-radius:8px;color:#5A6560;font-size:13px;">No active rallies. Start one below.</div>`;
+  }
+
+  html += `<div style="display:flex;flex-direction:column;gap:8px;">`;
+  activeSorted.forEach(r => {
+    const meta = TEAM_META[r.team];
+    const elapsed = (now - r.startTime) / 1000;
+    const rallyRemaining = RALLY_BUFFER - elapsed;
+    const hitRemaining = (r.hitTime - now) / 1000;
+    const hasHit = hitRemaining <= 0;
+    const rallyDone = rallyRemaining <= 0;
+    const imminent = !hasHit && hitRemaining <= 10;
+
+    const others = roster
+      .filter(p => p.id !== r.personId && p.team === "ally")
+      .map(p => {
+        const startBy = r.hitTime - (RALLY_BUFFER + p.marchTime) * 1000;
+        const followStartBy = r.hitTime - RALLY_BUFFER * 1000;
+        return { ...p, startBy, secsUntilStart: (startBy - now) / 1000, followStartBy, secsUntilFollowStart: (followStartBy - now) / 1000 };
+      })
+      .sort((a, b) => a.startBy - b.startBy);
+    const isOpen = !!expanded[r.id];
+    const isEnemy = r.team === "enemy";
+
+    html += `<div class="card ${imminent ? "imminent" : ""}" style="border-color:${hasHit ? "#E1594F" : "#1D2523"};border-left:3px solid ${meta.accent};">
+      <div class="row" style="justify-content:space-between;gap:10px;">
+        <div style="min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:#E8ECE9;">${esc(r.name)} <span style="font-size:11px;color:${meta.accent};margin-left:6px;">${meta.label}</span></div>
+          <div class="mono" style="font-size:11px;color:#6B7570;margin-top:2px;">hits ${fmtClock(new Date(r.hitTime))}</div>
+        </div>
+        <div class="row" style="gap:14px;">
+          <div style="text-align:right;">
+            <div class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.06em;">RALLY</div>
+            <div class="mono" style="font-size:15px;font-weight:700;color:${rallyDone ? "#3E4A46" : "#8A948F"};">${rallyDone ? "0:00" : fmtMMSS(rallyRemaining)}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.06em;">HIT</div>
+            <div class="mono" style="font-size:20px;font-weight:700;color:${hasHit ? "#E1594F" : "#F2A93B"};min-width:60px;">${hasHit ? "HIT" : fmtMMSS(hitRemaining)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <button class="adjbtn" onclick="adjustRally(${r.id},1)" title="Push hit time 1s later">+1</button>
+            <button class="adjbtn" onclick="adjustRally(${r.id},-1)" title="Pull hit time 1s earlier">-1</button>
+          </div>
+          <button class="btn" onclick="clearRally(${r.id})" style="background:none;border:none;color:#4A5450;padding:4px;font-size:16px;">✕</button>
+        </div>
+      </div>`;
+
+    if (others.length > 0) {
+      html += `<button class="sync-toggle" onclick="toggleExpanded(${r.id})">
+        <span>👥</span>
+        ${isEnemy ? "Sync same-time or follow-up hit" : "Sync others to this hit"}
+        <span style="display:inline-block;transform:${isOpen ? "rotate(180deg)" : "none"};transition:transform .15s;">▾</span>
+      </button>`;
+
+      if (isOpen) {
+        html += `<div style="margin-top:8px;border-top:1px solid #1D2523;padding-top:8px;">
+          <div class="sync-grid" style="grid-template-columns:${isEnemy ? "1fr 84px 84px" : "1fr 84px"};">`;
+        if (isEnemy) {
+          html += `<span></span>
+            <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">SAME TIME</span>
+            <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">FOLLOW-UP</span>`;
+        }
+        others.forEach(p => {
+          const pMeta = TEAM_META[p.team];
+          const late = p.secsUntilStart < -1;
+          const startNow = p.secsUntilStart >= -1 && p.secsUntilStart <= 0;
+          const followLate = p.secsUntilFollowStart < -1;
+          const followStartNow = p.secsUntilFollowStart >= -1 && p.secsUntilFollowStart <= 0;
+          html += `
+            <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
+              <span class="dot" style="background:${pMeta.accent};"></span>
+              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</span>
+              <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
+            </div>
+            <div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
+              ${startNow ? "now" : fmtMMSS(p.secsUntilStart)}
+            </div>`;
+          if (isEnemy) {
+            html += `<div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${followLate ? "#E1594F" : followStartNow ? "#3FD6C7" : "#8A948F"};">
+              ${followStartNow ? "now" : fmtMMSS(p.secsUntilFollowStart)}
+            </div>`;
+          }
+        });
+        html += `</div></div>`;
+      }
+    }
+    html += `</div>`;
+  });
+  html += `</div></div>`;
+
+  ["ally", "enemy"].forEach(team => {
+    const meta = TEAM_META[team];
+    const members = roster.filter(p => p.team === team);
+    html += `<div style="padding:8px 16px 20px;">
+      <div class="row" style="gap:8px;margin-bottom:10px;margin-top:8px;">
+        <span>${meta.icon}</span>
+        <div class="display" style="font-size:15px;color:${meta.accent};text-transform:uppercase;">${meta.label}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">`;
+
+    if (members.length === 0) {
+      html += `<div style="font-size:12.5px;color:#4A5450;padding:4px 2px;">No one added yet.</div>`;
+    }
+    members.forEach(p => {
+      html += `<div class="row card" style="justify-content:space-between;padding:9px 12px;">
+        <div>
+          <div style="font-size:13.5px;font-weight:500;">${esc(p.name)}</div>
+          <div class="mono" style="font-size:11px;color:#6B7570;">march ${p.marchTime}s</div>
+        </div>
+        <div class="row" style="gap:6px;">
+          <button class="btn row" onclick="startRally(${p.id})" style="gap:5px;background:${meta.accent};color:#0B0F0E;border:none;border-radius:6px;padding:6px 10px;font-size:12.5px;font-weight:600;">▶ Start</button>
+          <button class="btn" onclick="removePerson(${p.id})" style="background:none;border:none;color:#4A5450;padding:4px;font-size:14px;">🗑</button>
+        </div>
+      </div>`;
+    });
+
+    html += `</div>
+      <div class="row" style="gap:6px;">
+        <input id="name-${team}" placeholder="Name" value="${esc(draft[team].name)}" oninput="onDraftInput(this,'${team}','name')" onkeydown="handleEnter(event,'${team}')" style="flex:1;background:#121815;border:1px solid #1D2523;border-radius:6px;padding:8px 10px;color:#E8ECE9;font-size:13px;outline:none;" />
+        <input id="march-${team}" placeholder="secs" inputmode="numeric" value="${esc(draft[team].march)}" oninput="onDraftInput(this,'${team}','march')" onkeydown="handleEnter(event,'${team}')" style="width:60px;background:#121815;border:1px solid #1D2523;border-radius:6px;padding:8px 10px;color:#E8ECE9;font-size:13px;outline:none;" />
+        <button class="btn" onclick="addPerson('${team}')" style="background:#1D2523;border:1px solid #2A3330;border-radius:6px;padding:8px 10px;color:${meta.accent};font-size:16px;">+</button>
+      </div>
+    </div>`;
+  });
+
+  const activeEl = document.activeElement;
+  const activeId = activeEl && activeEl.id;
+  const activeVal = activeEl && "value" in activeEl ? activeEl.value : null;
+  const selStart = activeEl && activeEl.selectionStart;
+
+  document.getElementById("root").innerHTML = html;
+
+  if (activeId && activeVal !== null) {
+    const el = document.getElementById(activeId);
+    if (el) {
+      el.value = activeVal;
+      el.focus();
+      if (selStart != null) el.setSelectionRange(selStart, selStart);
+    }
+  }
+}
+
+render();
+setInterval(render, 1000);
+</script>
+</body>
+</html>
