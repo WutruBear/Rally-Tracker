@@ -77,12 +77,9 @@ let roster = loadJSON("roster", []).map(p => ({
   ...p,
   alliance: (p.alliance || "").trim() || "Unassigned"
 }));
-// rallies: { id, personId, name, team, alliance, marchTime, startAt, hitTime, groupId? }
-// startAt in the future => this is a *scheduled* rally (not yet started marching);
-// once now >= startAt it behaves like a normal, already-started rally.
 let rallies = loadJSON("rallies", []).map(r => ({
   ...r,
-  startAt: r.startAt != null ? r.startAt : r.startTime // migrate old field name
+  startAt: r.startAt != null ? r.startAt : r.startTime
 }));
 let groups = loadJSON("groups", []).map(g => ({
   mode: "now", targetTime: "", launchDelay: 0, memberIds: [], ...g
@@ -92,10 +89,10 @@ let draft = {
   ally: { name: "", march: "", alliance: "" },
   enemy: { name: "", march: "", alliance: "" }
 };
-let editDraft = null;       // { id, name, march, alliance } for roster edit-in-place
-let pendingDelete = null;   // { type: 'person'|'rally'|'group', id, label }
-let expanded = {};          // rallyId -> bool (sync panel expanded state)
-let groupEditor = null;     // { id: existing id or null, name, memberIds: [] }
+let editDraft = null;
+let pendingDelete = null;
+let expanded = {};
+let groupEditor = null;
 
 let idCounter = 1 + Math.max(
   0,
@@ -137,7 +134,6 @@ function groupNameById(id) {
   const g = groups.find(x => x.id === id);
   return g ? g.name : "Sync Group";
 }
-// Accepts plain seconds ("150") or mm:ss ("2:30"). Returns NaN if invalid.
 function parseMarchInput(str) {
   str = (str || "").trim();
   if (!str) return NaN;
@@ -152,8 +148,6 @@ function parseMarchInput(str) {
   const n = parseInt(str, 10);
   return isNaN(n) ? NaN : n;
 }
-// Parses "HH:MM" or "HH:MM:SS" as a UTC time-of-day and returns the next
-// timestamp (ms) that time occurs at, rolling to tomorrow if already passed.
 function parseUTCTimeToday(str) {
   str = (str || "").trim();
   const m = str.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
@@ -214,7 +208,7 @@ function handleEditKey(e) {
   if (e.key === "Escape") cancelEdit();
 }
 
-// ---- actions: delete confirmation (shared by roster + rallies + groups) ----
+// ---- actions: delete confirmation ----
 function requestDelete(type, id) {
   if (type === "person") {
     const p = roster.find(x => x.id === id);
@@ -272,8 +266,6 @@ function startRally(personId) {
   persist();
   render();
 }
-// Commits a still-scheduled rally to starting right now (like pressing Start
-// manually) — recalculates its hit time from this actual start moment.
 function startScheduledNow(id) {
   const r = rallies.find(x => x.id === id);
   if (!r) return;
@@ -288,7 +280,7 @@ function adjustRally(id, delta) {
   const now = Date.now();
   r.hitTime += delta * 1000;
   if (r.startAt && now < r.startAt) {
-    r.startAt += delta * 1000; // still scheduled: slide the whole plan together
+    r.startAt += delta * 1000;
   }
   persist();
   render();
@@ -334,7 +326,7 @@ function toggleGroupMember(personId) {
 function saveGroup() {
   if (!groupEditor) return;
   const name = groupEditor.name.trim() || `Sync Group ${groups.length + 1}`;
-  if (groupEditor.memberIds.length < 2) return; // need at least 2 to sync
+  if (groupEditor.memberIds.length < 2) return;
   if (groupEditor.id == null) {
     groups.push({ id: nextId(), name, memberIds: [...groupEditor.memberIds], mode: "now", targetTime: "", launchDelay: 0 });
   } else {
@@ -361,7 +353,6 @@ function onGroupTargetInput(el, id) {
 function handleGroupTargetKey(e) {
   if (e.key === "Enter") { e.target.blur(); render(); }
 }
-// Quick-fill the target time field. presetKey: '1m' | '5m' | '10m' | 'next00'.
 function setGroupPreset(id, presetKey) {
   const g = groups.find(x => x.id === id);
   if (!g) return;
@@ -384,9 +375,6 @@ function setGroupPreset(id, presetKey) {
   persist();
   render();
 }
-// Sends every member of the group to the Incoming list. Anyone whose
-// planned start time is already here starts immediately; everyone else
-// appears with a "starts in" countdown and auto-activates on schedule.
 function launchGroup(groupId) {
   const g = groups.find(x => x.id === groupId);
   if (!g) return;
@@ -453,6 +441,7 @@ function render() {
   activeSorted.forEach(r => {
     const meta = TEAM_META[r.team];
     const isScheduled = r.startAt && now < r.startAt;
+    r._wasScheduled = isScheduled;
     const elapsed = (now - r.startAt) / 1000;
     const rallyRemaining = RALLY_BUFFER - elapsed;
     const hitRemaining = (r.hitTime - now) / 1000;
@@ -463,8 +452,11 @@ function render() {
     const imminentStart = isScheduled && secsUntilStart <= 10;
     const isExpanded = expanded[r.id] !== false;
 
+    // Get IDs of all people currently in Incoming
+    const activePersonIds = new Set(rallies.map(x => x.personId));
+
     const others = roster
-      .filter(p => p.id !== r.personId && p.team === "ally")
+      .filter(p => !activePersonIds.has(p.id) && p.team === "ally")
       .map(p => {
         const startBy = r.hitTime - (RALLY_BUFFER + p.marchTime) * 1000;
         const followStartBy = r.hitTime - RALLY_BUFFER * 1000;
@@ -473,7 +465,12 @@ function render() {
       .sort((a, b) => a.startBy - b.startBy);
     const isEnemy = r.team === "enemy";
 
-    html += `<div class="card ${imminent ? "imminent" : ""} ${imminentStart ? "imminent-start" : ""}" style="border-color:${hasHit ? "#E1594F" : "#1D2523"};border-left:3px solid ${meta.accent};">
+    html += `<div class="card js-rally-card ${imminent ? "imminent" : ""} ${imminentStart ? "imminent-start" : ""}"
+      data-id="${r.id}"
+      data-is-scheduled="${isScheduled}"
+      data-start-at="${r.startAt}"
+      data-hit-time="${r.hitTime}"
+      style="border-color:${hasHit ? "#E1594F" : "#1D2523"};border-left:3px solid ${meta.accent};">
       <div class="row" style="justify-content:space-between;gap:10px;">
         <div style="min-width:0;">
           <div style="font-size:14px;font-weight:600;color:#E8ECE9;">${esc(r.name)} <span style="font-size:11px;color:${meta.accent};margin-left:6px;">${meta.label}</span>
@@ -488,18 +485,18 @@ function render() {
       html += `
           <div style="text-align:right;">
             <div class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.06em;">STARTS IN</div>
-            <div class="mono" style="font-size:20px;font-weight:700;color:#F2A93B;min-width:60px;">${fmtMMSS(secsUntilStart)}</div>
+            <div class="mono js-timer-starts-in" style="font-size:20px;font-weight:700;color:#F2A93B;min-width:60px;">${fmtMMSS(secsUntilStart)}</div>
           </div>
           <button class="btn" onclick="startScheduledNow(${r.id})" style="background:${meta.accent};color:#0B0F0E;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap;">▶ Start now</button>`;
     } else {
       html += `
           <div style="text-align:right;">
             <div class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.06em;">RALLY</div>
-            <div class="mono" style="font-size:15px;font-weight:700;color:${rallyDone ? "#3E4A46" : "#8A948F"};">${rallyDone ? "0:00" : fmtMMSS(rallyRemaining)}</div>
+            <div class="mono js-timer-rally" style="font-size:15px;font-weight:700;color:${rallyDone ? "#3E4A46" : "#8A948F"};">${rallyDone ? "0:00" : fmtMMSS(rallyRemaining)}</div>
           </div>
           <div style="text-align:right;">
             <div class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.06em;">HIT</div>
-            <div class="mono" style="font-size:20px;font-weight:700;color:${hasHit ? "#E1594F" : "#F2A93B"};min-width:60px;">${hasHit ? "HIT" : fmtMMSS(hitRemaining)}</div>
+            <div class="mono js-timer-hit" style="font-size:20px;font-weight:700;color:${hasHit ? "#E1594F" : "#F2A93B"};min-width:60px;">${hasHit ? "HIT" : fmtMMSS(hitRemaining)}</div>
           </div>`;
     }
 
@@ -545,11 +542,11 @@ function render() {
               <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</span>
               <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
             </div>
-            <div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
+            <div class="mono js-timer-sync" data-target-ts="${p.startBy}" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
               ${startNow ? "now" : fmtMMSS(p.secsUntilStart)}
             </div>`;
           if (isEnemy) {
-            html += `<div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${followLate ? "#E1594F" : followStartNow ? "#3FD6C7" : "#8A948F"};">
+            html += `<div class="mono js-timer-sync-follow" data-target-ts="${p.followStartBy}" style="font-size:12.5px;font-weight:700;text-align:right;color:${followLate ? "#E1594F" : followStartNow ? "#3FD6C7" : "#8A948F"};">
               ${followStartNow ? "now" : fmtMMSS(p.secsUntilFollowStart)}
             </div>`;
           }
@@ -611,7 +608,7 @@ function render() {
 
   groups.forEach(g => {
     const members = roster.filter(p => g.memberIds.includes(p.id));
-    if (members.length < 2) return; // roster members removed since group was made
+    if (members.length < 2) return;
     const totals = members.map(p => ({ ...p, total: RALLY_BUFFER + p.marchTime }));
     const targetTs = g.mode === "target" ? parseUTCTimeToday(g.targetTime) : null;
     const canLaunch = g.mode === "now" || targetTs != null;
@@ -655,8 +652,7 @@ function render() {
       html += `<div class="row" style="gap:8px;margin-bottom:8px;">
         <span class="mono" style="font-size:11px;color:#8A948F;">Hit at (UTC)</span>
         <input id="group-target-${g.id}" class="field dark" placeholder="HH:MM or HH:MM:SS" value="${esc(g.targetTime)}" oninput="onGroupTargetInput(this,${g.id})" onkeydown="handleGroupTargetKey(event)" onblur="render()" style="width:130px;" />
-      </div>
-`;
+      </div>`;
 
       if (targetTs == null) {
         html += `<div style="font-size:12px;color:#5A6560;">Enter a valid UTC time to calculate the start order.</div>`;
@@ -680,21 +676,20 @@ function render() {
               <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
             </div>
             <div class="mono" style="font-size:11.5px;text-align:right;color:#6B7570;">${fmtClockUTC(new Date(p.startAt))}</div>
-            <div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
+            <div class="mono js-timer-group-start" data-target-ts="${p.startAt}" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
               ${startNow ? "now" : fmtMMSS(secsUntil)}
             </div>`;
         });
         html += `</div>`;
       }
     } else {
-      // "start now" mode: relative launch order, not a live countdown
       const maxTotal = Math.max(...totals.map(p => p.total));
       const etaTs = now + ((Number(g.launchDelay) || 0) + maxTotal) * 1000;
       const launchDelay = Number(g.launchDelay) || 0;
       const rows = totals
         .map(p => ({ ...p, delay: launchDelay + maxTotal - p.total }))
         .sort((a, b) => a.delay - b.delay);
-      html += `<div class="mono" style="font-size:11px;color:#F2A93B;margin-bottom:8px;">🎯 ≈ hits UTC ${fmtClockUTC(new Date(etaTs))} if launched now</div>
+      html += `<div class="mono js-group-eta" data-launch-delay="${launchDelay}" data-max-total="${maxTotal}" style="font-size:11px;color:#F2A93B;margin-bottom:8px;">🎯 ≈ hits UTC ${fmtClockUTC(new Date(etaTs))} if launched now</div>
         <div class="sync-grid" style="grid-template-columns:1fr 84px;">
           <span></span>
           <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">LAUNCH ORDER</span>`;
@@ -740,7 +735,7 @@ function render() {
     alliances.forEach(alliance => {
       const allianceMembers = members
         .filter(p => (p.alliance || "Unassigned") === alliance)
-        .sort((a, b) => b.marchTime - a.marchTime); // longest march first
+        .sort((a, b) => b.marchTime - a.marchTime);
 
       html += `<div>
         <div class="row" style="gap:6px;margin-bottom:6px;padding:4px 2px;">
@@ -803,25 +798,107 @@ function render() {
     </div>`;
   }
 
-  const activeEl = document.activeElement;
-  const activeId = activeEl && activeEl.id;
-  const activeVal = activeEl && "value" in activeEl ? activeEl.value : null;
-  const selStart = activeEl && activeEl.selectionStart;
-
   document.getElementById("root").innerHTML = html;
+}
 
-  if (activeId && activeVal !== null) {
-    const el = document.getElementById(activeId);
-    if (el) {
-      el.value = activeVal;
-      el.focus();
-      if (selStart != null) el.setSelectionRange(selStart, selStart);
+// ---- targeted fast timer updates ----
+function tickTimers() {
+  const now = Date.now();
+  let needsReRender = false;
+
+  for (let r of rallies) {
+    if (now - r.hitTime >= 2 * 60 * 1000) {
+      needsReRender = true;
+      break;
+    }
+    if (r._wasScheduled && now >= r.startAt) {
+      needsReRender = true;
+      break;
     }
   }
+
+  if (needsReRender) {
+    render();
+    return;
+  }
+
+  document.querySelectorAll(".js-rally-card").forEach(card => {
+    const isScheduled = card.dataset.isScheduled === "true";
+    const startAt = Number(card.dataset.startAt);
+    const hitTime = Number(card.dataset.hitTime);
+
+    const hitRemaining = (hitTime - now) / 1000;
+    const hasHit = hitRemaining <= 0;
+    const secsUntilStart = isScheduled ? (startAt - now) / 1000 : 0;
+
+    const imminent = !isScheduled && !hasHit && hitRemaining <= 10;
+    const imminentStart = isScheduled && secsUntilStart <= 10;
+
+    card.classList.toggle("imminent", imminent);
+    card.classList.toggle("imminent-start", imminentStart);
+    const borderCol = hasHit ? "#E1594F" : "#1D2523";
+    card.style.borderTopColor = borderCol;
+    card.style.borderRightColor = borderCol;
+    card.style.borderBottomColor = borderCol;
+
+    const startsInEl = card.querySelector(".js-timer-starts-in");
+    if (startsInEl) {
+      startsInEl.textContent = fmtMMSS(secsUntilStart);
+    }
+
+    const rallyEl = card.querySelector(".js-timer-rally");
+    if (rallyEl) {
+      const elapsed = (now - startAt) / 1000;
+      const rallyRemaining = RALLY_BUFFER - elapsed;
+      const rallyDone = rallyRemaining <= 0;
+      rallyEl.textContent = rallyDone ? "0:00" : fmtMMSS(rallyRemaining);
+      rallyEl.style.color = rallyDone ? "#3E4A46" : "#8A948F";
+    }
+
+    const hitEl = card.querySelector(".js-timer-hit");
+    if (hitEl) {
+      hitEl.textContent = hasHit ? "HIT" : fmtMMSS(hitRemaining);
+      hitEl.style.color = hasHit ? "#E1594F" : "#F2A93B";
+    }
+  });
+
+  document.querySelectorAll(".js-timer-sync").forEach(el => {
+    const targetTs = Number(el.dataset.targetTs);
+    const secs = (targetTs - now) / 1000;
+    const late = secs < -1;
+    const startNow = secs >= -1 && secs <= 0;
+    el.textContent = startNow ? "now" : fmtMMSS(secs);
+    el.style.color = late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F";
+  });
+
+  document.querySelectorAll(".js-timer-sync-follow").forEach(el => {
+    const targetTs = Number(el.dataset.targetTs);
+    const secs = (targetTs - now) / 1000;
+    const followLate = secs < -1;
+    const followStartNow = secs >= -1 && secs <= 0;
+    el.textContent = followStartNow ? "now" : fmtMMSS(secs);
+    el.style.color = followLate ? "#E1594F" : followStartNow ? "#3FD6C7" : "#8A948F";
+  });
+
+  document.querySelectorAll(".js-timer-group-start").forEach(el => {
+    const targetTs = Number(el.dataset.targetTs);
+    const secs = (targetTs - now) / 1000;
+    const late = secs < -1;
+    const startNow = secs >= -1 && secs <= 0;
+    el.textContent = startNow ? "now" : fmtMMSS(secs);
+    el.style.color = late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F";
+  });
+
+  document.querySelectorAll(".js-group-eta").forEach(el => {
+    const launchDelay = Number(el.dataset.launchDelay) || 0;
+    const maxTotal = Number(el.dataset.maxTotal) || 0;
+    const etaTs = now + (launchDelay + maxTotal) * 1000;
+    el.textContent = `🎯 ≈ hits UTC ${fmtClockUTC(new Date(etaTs))} if launched now`;
+  });
 }
 
 render();
-setInterval(render, 1000);
+setInterval(tickTimers, 1000);
 </script>
 </body>
 </html>
