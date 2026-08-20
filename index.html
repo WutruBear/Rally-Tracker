@@ -290,6 +290,12 @@ function toggleExpanded(id) {
   render();
 }
 
+let groupExpanded = {};
+function toggleGroupExpanded(id) {
+  groupExpanded[id] = groupExpanded[id] === false ? true : false; // Defaults to expanded, click toggles collapsed
+  render();
+}
+
 function onDraftInput(el, team, field) {
   draft[team][field] = el.value;
 }
@@ -613,19 +619,49 @@ function render() {
     const targetTs = g.mode === "target" ? parseUTCTimeToday(g.targetTime) : null;
     const canLaunch = g.mode === "now" || targetTs != null;
     const launchedCount = rallies.filter(r => r.groupId === g.id).length;
+    const isExpanded = groupExpanded[g.id] !== false;
+
+    // Sort members by march time (longest march launches first)
+    const sortedMembers = [...members].sort((a, b) => b.marchTime - a.marchTime);
+    const maxMarch = sortedMembers[0].marchTime;
+    const memberDetails = sortedMembers.map(p => {
+      const delay = maxMarch - p.marchTime;
+      if (delay === 0) return `${p.name} (initiate)`;
+      const delayStr = delay >= 60 ? fmtMMSS(delay) : `${delay}s`;
+      return `${p.name} (+${delayStr})`;
+    }).join(", ");
+
+    let launchSummary = "";
+    if (g.mode === "target" && targetTs) {
+      launchSummary = `Target: UTC ${fmtClockUTC(new Date(targetTs))}`;
+    } else if (g.mode === "now") {
+      const delay = Number(g.launchDelay) || 0;
+      launchSummary = delay > 0 ? `Start delay: +${fmtMMSS(delay)}` : "Start delay: 0s";
+    } else {
+      launchSummary = "Target: Set time";
+    }
 
     html += `<div class="card" style="border-left:3px solid #3FD6C7;">
-      <div class="row" style="justify-content:space-between;gap:10px;margin-bottom:8px;">
-        <div>
-          <div style="font-size:14px;font-weight:600;">${esc(g.name)}</div>
-          <div class="mono" style="font-size:10.5px;color:#6B7570;">${members.length} members</div>
+      <div class="row" style="justify-content:space-between;gap:10px;${isExpanded ? "margin-bottom:10px;" : ""}">
+        <div class="row" onclick="toggleGroupExpanded(${g.id})" style="cursor:pointer;flex:1;min-width:0;gap:8px;user-select:none;">
+          <span style="font-size:12px;color:#8A948F;">${isExpanded ? "▾" : "▸"}</span>
+          <div style="min-width:0;">
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.name)}</div>
+            <div class="mono" style="font-size:10.5px;color:#6B7570;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+              ${members.length} members (${esc(memberDetails)}) · <span style="color:#F2A93B;">${esc(launchSummary)}</span>
+            </div>
+          </div>
         </div>
-        <div class="row" style="gap:6px;">
+        <div class="row" style="gap:6px;flex-shrink:0;">
+          ${launchedCount > 0 ? `<button class="btn pill" onclick="requestDelete('groupLaunch',${g.id})" style="background:none;border-color:#E1594F;color:#E1594F;padding:4px 8px;font-size:10.5px;">✕ (${launchedCount})</button>` : ""}
+          <button class="btn pill" ${canLaunch ? `onclick="launchGroup(${g.id})"` : ""} style="background:#F2A93B;color:#0B0F0E;border-color:#F2A93B;padding:4px 10px;font-size:10.5px;${canLaunch ? "" : "opacity:0.4;cursor:default;"}">▶ Launch</button>
           <button class="btn" onclick="openGroupEditor(${g.id})" style="background:none;border:none;color:#4A5450;padding:4px;font-size:14px;">✎</button>
           <button class="btn" onclick="requestDelete('group',${g.id})" style="background:none;border:none;color:#4A5450;padding:4px;font-size:14px;">🗑</button>
         </div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+      </div>`;
+
+    if (isExpanded) {
+      html += `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
         <div class="row" style="gap:6px;">
           <button class="btn pill ${g.mode === "now" ? "active" : ""}" onclick="setGroupMode(${g.id},'now')" style="flex:1;">Start time</button>
           <button class="btn pill ${g.mode === "target" ? "active" : ""}" onclick="setGroupMode(${g.id},'target')" style="flex:1;">Target time</button>
@@ -640,71 +676,66 @@ function render() {
             <button class="btn pill" onclick="setGroupPreset(${g.id},'10m')" style="padding:3px 9px;font-size:10.5px;">+10min</button>
           `}
         </div>
-      </div>
-      <div class="row" style="gap:6px;margin-bottom:10px;">
-        <div class="row" style="gap:6px;margin-left:auto;">
-          ${launchedCount > 0 ? `<button class="btn pill" onclick="requestDelete('groupLaunch',${g.id})" style="background:none;border-color:#E1594F;color:#E1594F;">✕ Cancel launch (${launchedCount})</button>` : ""}
-          <button class="btn pill" ${canLaunch ? `onclick="launchGroup(${g.id})"` : ""} style="background:#F2A93B;color:#0B0F0E;border-color:#F2A93B;${canLaunch ? "" : "opacity:0.4;cursor:default;"}">▶ Launch</button>
-        </div>
       </div>`;
 
-    if (g.mode === "target") {
-      html += `<div class="row" style="gap:8px;margin-bottom:8px;">
-        <span class="mono" style="font-size:11px;color:#8A948F;">Hit at (UTC)</span>
-        <input id="group-target-${g.id}" class="field dark" placeholder="HH:MM or HH:MM:SS" value="${esc(g.targetTime)}" oninput="onGroupTargetInput(this,${g.id})" onkeydown="handleGroupTargetKey(event)" onblur="render()" style="width:130px;" />
-      </div>`;
+      if (g.mode === "target") {
+        html += `<div class="row" style="gap:8px;margin-bottom:8px;">
+          <span class="mono" style="font-size:11px;color:#8A948F;">Hit at (UTC)</span>
+          <input id="group-target-${g.id}" class="field dark" placeholder="HH:MM or HH:MM:SS" value="${esc(g.targetTime)}" oninput="onGroupTargetInput(this,${g.id})" onkeydown="handleGroupTargetKey(event)" onblur="render()" style="width:130px;" />
+        </div>`;
 
-      if (targetTs == null) {
-        html += `<div style="font-size:12px;color:#5A6560;">Enter a valid UTC time to calculate the start order.</div>`;
+        if (targetTs == null) {
+          html += `<div style="font-size:12px;color:#5A6560;">Enter a valid UTC time to calculate the start order.</div>`;
+        } else {
+          const rows = totals
+            .map(p => ({ ...p, startAt: targetTs - p.total * 1000 }))
+            .sort((a, b) => a.startAt - b.startAt);
+          html += `<div class="mono" style="font-size:11px;color:#F2A93B;margin-bottom:8px;">🎯 Hits at UTC ${fmtClockUTC(new Date(targetTs))}</div>
+            <div class="sync-grid" style="grid-template-columns:1fr 78px 84px;">
+              <span></span>
+              <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">START (UTC)</span>
+              <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">STARTS IN</span>`;
+          rows.forEach(p => {
+            const secsUntil = (p.startAt - now) / 1000;
+            const late = secsUntil < -1;
+            const startNow = secsUntil >= -1 && secsUntil <= 0;
+            html += `
+              <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
+                <span class="dot" style="background:#3FD6C7;"></span>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</span>
+                <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
+              </div>
+              <div class="mono" style="font-size:11.5px;text-align:right;color:#6B7570;">${fmtClockUTC(new Date(p.startAt))}</div>
+              <div class="mono js-timer-group-start" data-target-ts="${p.startAt}" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
+                ${startNow ? "now" : fmtMMSS(secsUntil)}
+              </div>`;
+          });
+          html += `</div>`;
+        }
       } else {
+        const maxTotal = Math.max(...totals.map(p => p.total));
+        const etaTs = now + ((Number(g.launchDelay) || 0) + maxTotal) * 1000;
+        const launchDelay = Number(g.launchDelay) || 0;
         const rows = totals
-          .map(p => ({ ...p, startAt: targetTs - p.total * 1000 }))
-          .sort((a, b) => a.startAt - b.startAt);
-        html += `<div class="mono" style="font-size:11px;color:#F2A93B;margin-bottom:8px;">🎯 Hits at UTC ${fmtClockUTC(new Date(targetTs))}</div>
-          <div class="sync-grid" style="grid-template-columns:1fr 78px 84px;">
+          .map(p => ({ ...p, delay: launchDelay + maxTotal - p.total }))
+          .sort((a, b) => a.delay - b.delay);
+        html += `<div class="mono js-group-eta" data-launch-delay="${launchDelay}" data-max-total="${maxTotal}" style="font-size:11px;color:#F2A93B;margin-bottom:8px;">🎯 ≈ hits UTC ${fmtClockUTC(new Date(etaTs))} if launched now</div>
+          <div class="sync-grid" style="grid-template-columns:1fr 84px;">
             <span></span>
-            <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">START (UTC)</span>
-            <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">STARTS IN</span>`;
+            <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">LAUNCH ORDER</span>`;
         rows.forEach(p => {
-          const secsUntil = (p.startAt - now) / 1000;
-          const late = secsUntil < -1;
-          const startNow = secsUntil >= -1 && secsUntil <= 0;
           html += `
             <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
               <span class="dot" style="background:#3FD6C7;"></span>
               <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</span>
               <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
             </div>
-            <div class="mono" style="font-size:11.5px;text-align:right;color:#6B7570;">${fmtClockUTC(new Date(p.startAt))}</div>
-            <div class="mono js-timer-group-start" data-target-ts="${p.startAt}" style="font-size:12.5px;font-weight:700;text-align:right;color:${late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F"};">
-              ${startNow ? "now" : fmtMMSS(secsUntil)}
+            <div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${p.delay <= 0 ? "#F2A93B" : "#8A948F"};">
+              ${p.delay <= 0 ? "start now" : "+" + fmtMMSS(p.delay)}
             </div>`;
         });
         html += `</div>`;
       }
-    } else {
-      const maxTotal = Math.max(...totals.map(p => p.total));
-      const etaTs = now + ((Number(g.launchDelay) || 0) + maxTotal) * 1000;
-      const launchDelay = Number(g.launchDelay) || 0;
-      const rows = totals
-        .map(p => ({ ...p, delay: launchDelay + maxTotal - p.total }))
-        .sort((a, b) => a.delay - b.delay);
-      html += `<div class="mono js-group-eta" data-launch-delay="${launchDelay}" data-max-total="${maxTotal}" style="font-size:11px;color:#F2A93B;margin-bottom:8px;">🎯 ≈ hits UTC ${fmtClockUTC(new Date(etaTs))} if launched now</div>
-        <div class="sync-grid" style="grid-template-columns:1fr 84px;">
-          <span></span>
-          <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">LAUNCH ORDER</span>`;
-      rows.forEach(p => {
-        html += `
-          <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
-            <span class="dot" style="background:#3FD6C7;"></span>
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</span>
-            <span class="mono" style="color:#5A6560;font-size:10.5px;white-space:nowrap;">(${p.marchTime}s)</span>
-          </div>
-          <div class="mono" style="font-size:12.5px;font-weight:700;text-align:right;color:${p.delay <= 0 ? "#F2A93B" : "#8A948F"};">
-            ${p.delay <= 0 ? "start now" : "+" + fmtMMSS(p.delay)}
-          </div>`;
-      });
-      html += `</div>`;
     }
 
     html += `</div>`;
