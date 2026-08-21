@@ -33,7 +33,13 @@
   .sync-toggle {
     display: flex; align-items: center; gap: 6px; margin-top: 8px; background: none;
     border: none; color: #6B7570; cursor: pointer; font-size: 11.5px; padding: 4px 0 0;
+    font-family: inherit; text-align: left;
   }
+  .group-toggle {
+    display: flex; align-items: center; background: none; border: none; color: inherit;
+    cursor: pointer; font: inherit; text-align: left; padding: 0; flex: 1; min-width: 0;
+  }
+  .member-option { margin: 0; flex-shrink: 0; accent-color: #3FD6C7; }
   .sync-grid { display: grid; column-gap: 8px; row-gap: 5px; }
   .adjbtn {
     background: #1D2523; border: 1px solid #2A3330; border-radius: 4px; color: #8A948F;
@@ -49,6 +55,14 @@
     cursor: pointer; font-size: 11px; font-weight: 600; padding: 5px 12px;
   }
   .pill.active { background: #3FD6C7; color: #0B0F0E; border-color: #3FD6C7; }
+  .roster-teams { display: grid; grid-template-columns: 1fr; }
+  .member-add-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 105px 88px auto; gap: 6px; }
+  .member-add-row .field { width: 100% !important; min-width: 0; }
+  .member-add-row button { min-width: 0; }
+  @media (min-width: 760px) { .roster-teams { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+  @media (max-width: 520px) {
+    .member-add-row { grid-template-columns: minmax(0, 1fr) 90px 76px auto; }
+  }
 </style>
 </head>
 <body>
@@ -128,7 +142,7 @@ function fmtClockUTC(date) {
 function esc(str) {
   const d = document.createElement("div");
   d.textContent = str;
-  return d.innerHTML;
+  return d.innerHTML.replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 function groupNameById(id) {
   const g = groups.find(x => x.id === id);
@@ -365,6 +379,8 @@ function setGroupPreset(id, presetKey) {
   const now = Date.now();
   if (g.mode === "now") {
     if (presetKey === "now") g.launchDelay = 0;
+    else if (presetKey === "10s") g.launchDelay = 10;
+    else if (presetKey === "30s") g.launchDelay = 30;
     else if (presetKey === "1m") g.launchDelay = 60;
     else if (presetKey === "5m") g.launchDelay = 300;
     else return;
@@ -414,8 +430,56 @@ function launchGroup(groupId) {
   render();
 }
 
+// ---- shared timer state ----
+function getRallyTimerState(r, now = Date.now()) {
+  const isScheduled = !!r.startAt && now < r.startAt;
+  const elapsed = (now - r.startAt) / 1000;
+  const rallyRemaining = RALLY_BUFFER - elapsed;
+  const hitRemaining = (r.hitTime - now) / 1000;
+  const hasHit = hitRemaining <= 0;
+  const rallyDone = rallyRemaining <= 0;
+  const imminent = !isScheduled && !hasHit && hitRemaining <= 10;
+  const secsUntilStart = isScheduled ? (r.startAt - now) / 1000 : 0;
+  const imminentStart = isScheduled && secsUntilStart <= 10;
+  return {
+    isScheduled, elapsed, rallyRemaining, hitRemaining, hasHit, rallyDone,
+    imminent, secsUntilStart, imminentStart,
+    borderColor: hasHit ? "#E1594F" : "#1D2523",
+    rallyColor: rallyDone ? "#3E4A46" : "#8A948F",
+    hitColor: hasHit ? "#E1594F" : "#F2A93B"
+  };
+}
+
+function getCountdownState(targetTs, now = Date.now()) {
+  const secs = (targetTs - now) / 1000;
+  return { secs, late: secs < -1, startNow: secs >= -1 && secs <= 0 };
+}
+
+function captureFocus() {
+  const el = document.activeElement;
+  if (!el || el === document.body || !el.id) return null;
+  return {
+    id: el.id,
+    start: typeof el.selectionStart === "number" ? el.selectionStart : null,
+    end: typeof el.selectionEnd === "number" ? el.selectionEnd : null
+  };
+}
+
+function restoreFocus(snapshot) {
+  if (!snapshot) return;
+  const el = document.getElementById(snapshot.id);
+  if (!el) return;
+  try {
+    el.focus({ preventScroll: true });
+    if (snapshot.start != null && typeof el.setSelectionRange === "function") {
+      el.setSelectionRange(snapshot.start, snapshot.end);
+    }
+  } catch (e) {}
+}
+
 // ---- render ----
 function render() {
+  const focusSnapshot = captureFocus();
   const now = Date.now();
   rallies = rallies.filter(x => {
     const keep = now - x.hitTime < 2 * 60 * 1000;
@@ -446,16 +510,9 @@ function render() {
   html += `<div style="display:flex;flex-direction:column;gap:8px;">`;
   activeSorted.forEach(r => {
     const meta = TEAM_META[r.team];
-    const isScheduled = r.startAt && now < r.startAt;
+    const timer = getRallyTimerState(r, now);
+    const { isScheduled, rallyRemaining, hitRemaining, hasHit, rallyDone, imminent, secsUntilStart, imminentStart } = timer;
     r._wasScheduled = isScheduled;
-    const elapsed = (now - r.startAt) / 1000;
-    const rallyRemaining = RALLY_BUFFER - elapsed;
-    const hitRemaining = (r.hitTime - now) / 1000;
-    const hasHit = hitRemaining <= 0;
-    const rallyDone = rallyRemaining <= 0;
-    const imminent = !isScheduled && !hasHit && hitRemaining <= 10;
-    const secsUntilStart = isScheduled ? (r.startAt - now) / 1000 : 0;
-    const imminentStart = isScheduled && secsUntilStart <= 10;
     const isExpanded = expanded[r.id] !== false;
 
     // Get IDs of all people currently in Incoming
@@ -522,14 +579,15 @@ function render() {
       </div>`;
 
     if (others.length > 0) {
-      html += `<div class="sync-toggle" onclick="toggleExpanded(${r.id})" style="cursor:pointer;user-select:none;">
-        <span>${isExpanded ? "▾" : "▸"}</span>
-        <span>👥</span>
+      html += `<button type="button" class="sync-toggle" onclick="toggleExpanded(${r.id})"
+        aria-expanded="${isExpanded}" aria-controls="sync-options-${r.id}" style="user-select:none;">
+        <span aria-hidden="true">${isExpanded ? "▾" : "▸"}</span>
+        <span aria-hidden="true">👥</span>
         ${isEnemy ? "Sync same-time or follow-up hit" : "Sync others to this hit"}
-      </div>`;
+      </button>`;
 
       if (isExpanded) {
-        html += `<div style="margin-top:8px;border-top:1px solid #1D2523;padding-top:8px;">
+        html += `<div id="sync-options-${r.id}" style="margin-top:8px;border-top:1px solid #1D2523;padding-top:8px;">
           <div class="sync-grid" style="grid-template-columns:${isEnemy ? "1fr 84px 84px" : "1fr 84px"};">`;
         if (isEnemy) {
           html += `<span></span>
@@ -538,10 +596,12 @@ function render() {
         }
         others.forEach(p => {
           const pMeta = TEAM_META[p.team];
-          const late = p.secsUntilStart < -1;
-          const startNow = p.secsUntilStart >= -1 && p.secsUntilStart <= 0;
-          const followLate = p.secsUntilFollowStart < -1;
-          const followStartNow = p.secsUntilFollowStart >= -1 && p.secsUntilFollowStart <= 0;
+          const startState = getCountdownState(p.startBy, now);
+          const followState = getCountdownState(p.followStartBy, now);
+          const late = startState.late;
+          const startNow = startState.startNow;
+          const followLate = followState.late;
+          const followStartNow = followState.startNow;
           html += `
             <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
               <span class="dot" style="background:${pMeta.accent};"></span>
@@ -574,14 +634,14 @@ function render() {
       </div>
       <button class="btn pill" onclick="openGroupEditor(null)">+ New group</button>
     </div>
-    <div class="mono" style="font-size:11px;color:#5A6560;margin-bottom:10px;">Plan a synced hit, then hit Launch to send everyone to Incoming with a start countdown.</div>
+    <div class="mono" style="font-size:11px;color:#5A6560;margin-bottom:10px;">Plan a coordinated hit.</div>
     <div style="display:flex;flex-direction:column;gap:10px;">`;
 
   if (groupEditor) {
     const isNew = groupEditor.id == null;
     html += `<div class="card" style="border-color:#2A3330;">
       <div class="mono" style="font-size:10px;color:#5A6560;letter-spacing:0.06em;margin-bottom:6px;">${isNew ? "NEW GROUP" : "EDIT GROUP"}</div>
-      <input id="group-editor-name" class="field" placeholder="Group name (e.g. Alpha Strike)" value="${esc(groupEditor.name)}" oninput="onGroupNameInput(this)" style="width:100%;margin-bottom:10px;" />`;
+      <input id="group-editor-name" class="field" aria-label="Group name" placeholder="Group name (e.g. Counter)" value="${esc(groupEditor.name)}" oninput="onGroupNameInput(this)" style="width:100%;margin-bottom:10px;" />`;
 
     if (allyMembers.length === 0) {
       html += `<div style="font-size:12.5px;color:#4A5450;padding:6px 2px;">Add members to OUR STATE roster first.</div>`;
@@ -590,12 +650,13 @@ function render() {
         <div style="display:flex;flex-direction:column;gap:2px;max-height:220px;overflow-y:auto;margin-bottom:10px;">`;
       allyMembers.forEach(p => {
         const checked = groupEditor.memberIds.includes(p.id);
-        html += `<div class="row" style="gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:${checked ? "#152420" : "transparent"};" onclick="toggleGroupMember(${p.id})">
-          <span style="font-size:14px;color:${checked ? "#3FD6C7" : "#4A5450"};">${checked ? "☑" : "☐"}</span>
+        html += `<label class="row" style="gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:${checked ? "#152420" : "transparent"};">
+          <input class="member-option" type="checkbox" id="group-member-${p.id}" aria-label="Add ${esc(p.name)} to group"
+            ${checked ? "checked" : ""} onchange="toggleGroupMember(${p.id})" />
           <span style="font-size:13px;flex:1;">${esc(p.name)}</span>
           <span class="mono" style="font-size:9.5px;color:#5A6560;">${esc(p.alliance)}</span>
           <span class="mono" style="font-size:10.5px;color:#6B7570;">${p.marchTime}s</span>
-        </div>`;
+        </label>`;
       });
       html += `</div>`;
     }
@@ -643,15 +704,16 @@ function render() {
 
     html += `<div class="card" style="border-left:3px solid #3FD6C7;">
       <div class="row" style="justify-content:space-between;gap:10px;${isExpanded ? "margin-bottom:10px;" : ""}">
-        <div class="row" onclick="toggleGroupExpanded(${g.id})" style="cursor:pointer;flex:1;min-width:0;gap:8px;user-select:none;">
-          <span style="font-size:12px;color:#8A948F;">${isExpanded ? "▾" : "▸"}</span>
-          <div style="min-width:0;">
-            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.name)}</div>
-            <div class="mono" style="font-size:10.5px;color:#6B7570;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        <button type="button" class="group-toggle" onclick="toggleGroupExpanded(${g.id})"
+          aria-expanded="${isExpanded}" aria-controls="group-options-${g.id}">
+          <span aria-hidden="true" style="font-size:12px;color:#8A948F;margin-right:8px;">${isExpanded ? "▾" : "▸"}</span>
+          <span style="min-width:0;">
+            <span style="display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.name)}</span>
+            <span class="mono" style="display:block;font-size:10.5px;color:#6B7570;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
               ${members.length} members (${esc(memberDetails)}) · <span style="color:#F2A93B;">${esc(launchSummary)}</span>
-            </div>
-          </div>
-        </div>
+            </span>
+          </span>
+        </button>
         <div class="row" style="gap:6px;flex-shrink:0;">
           ${launchedCount > 0 ? `<button class="btn pill" onclick="requestDelete('groupLaunch',${g.id})" style="background:none;border-color:#E1594F;color:#E1594F;padding:4px 8px;font-size:10.5px;">✕ (${launchedCount})</button>` : ""}
           <button class="btn pill" ${canLaunch ? `onclick="launchGroup(${g.id})"` : ""} style="background:#F2A93B;color:#0B0F0E;border-color:#F2A93B;padding:4px 10px;font-size:10.5px;${canLaunch ? "" : "opacity:0.4;cursor:default;"}">▶ Launch</button>
@@ -661,7 +723,7 @@ function render() {
       </div>`;
 
     if (isExpanded) {
-      html += `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+      html += `<div id="group-options-${g.id}" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
         <div class="row" style="gap:6px;">
           <button class="btn pill ${g.mode === "now" ? "active" : ""}" onclick="setGroupMode(${g.id},'now')" style="flex:1;">Start time</button>
           <button class="btn pill ${g.mode === "target" ? "active" : ""}" onclick="setGroupMode(${g.id},'target')" style="flex:1;">Target time</button>
@@ -669,6 +731,8 @@ function render() {
         <div class="row" style="gap:5px;">
           ${g.mode === "now" ? `
             <button class="btn pill ${((Number(g.launchDelay) || 0) === 0) ? "active" : ""}" onclick="setGroupPreset(${g.id},'now')" style="padding:3px 9px;font-size:10.5px;">now</button>
+            <button class="btn pill ${Number(g.launchDelay) === 10 ? "active" : ""}" onclick="setGroupPreset(${g.id},'10s')" style="padding:3px 9px;font-size:10.5px;">10sec</button>
+            <button class="btn pill ${Number(g.launchDelay) === 30 ? "active" : ""}" onclick="setGroupPreset(${g.id},'30s')" style="padding:3px 9px;font-size:10.5px;">30sec</button>
             <button class="btn pill ${Number(g.launchDelay) === 60 ? "active" : ""}" onclick="setGroupPreset(${g.id},'1m')" style="padding:3px 9px;font-size:10.5px;">1min</button>
             <button class="btn pill ${Number(g.launchDelay) === 300 ? "active" : ""}" onclick="setGroupPreset(${g.id},'5m')" style="padding:3px 9px;font-size:10.5px;">5min</button>
           ` : `
@@ -681,7 +745,7 @@ function render() {
       if (g.mode === "target") {
         html += `<div class="row" style="gap:8px;margin-bottom:8px;">
           <span class="mono" style="font-size:11px;color:#8A948F;">Hit at (UTC)</span>
-          <input id="group-target-${g.id}" class="field dark" placeholder="HH:MM or HH:MM:SS" value="${esc(g.targetTime)}" oninput="onGroupTargetInput(this,${g.id})" onkeydown="handleGroupTargetKey(event)" onblur="render()" style="width:130px;" />
+          <input id="group-target-${g.id}" class="field dark" aria-label="Group target time in UTC" placeholder="HH:MM or HH:MM:SS" value="${esc(g.targetTime)}" oninput="onGroupTargetInput(this,${g.id})" onkeydown="handleGroupTargetKey(event)" onblur="render()" style="width:130px;" />
         </div>`;
 
         if (targetTs == null) {
@@ -696,9 +760,10 @@ function render() {
               <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">START (UTC)</span>
               <span class="mono" style="font-size:9px;color:#5A6560;letter-spacing:0.04em;text-align:right;">STARTS IN</span>`;
           rows.forEach(p => {
-            const secsUntil = (p.startAt - now) / 1000;
-            const late = secsUntil < -1;
-            const startNow = secsUntil >= -1 && secsUntil <= 0;
+            const startState = getCountdownState(p.startAt, now);
+            const secsUntil = startState.secs;
+            const late = startState.late;
+            const startNow = startState.startNow;
             html += `
               <div class="row" style="gap:6px;min-width:0;font-size:12.5px;">
                 <span class="dot" style="background:#3FD6C7;"></span>
@@ -743,6 +808,7 @@ function render() {
 
   html += `</div></div>`;
 
+  html += `<div class="roster-teams">`;
   ["ally", "enemy"].forEach(team => {
     const meta = TEAM_META[team];
     const members = roster.filter(p => p.team === team);
@@ -752,7 +818,7 @@ function render() {
       return a.localeCompare(b);
     });
 
-    html += `<div style="padding:8px 16px 20px;">
+    html += `<div class="roster-team-section" style="padding:8px 16px 20px;">
       <div class="row" style="gap:8px;margin-bottom:10px;margin-top:8px;">
         <span>${meta.icon}</span>
         <div class="display" style="font-size:15px;color:${meta.accent};text-transform:uppercase;">${meta.label}</div>
@@ -780,9 +846,9 @@ function render() {
         if (editDraft && editDraft.id === p.id) {
           html += `<div class="card" style="padding:9px 12px;">
             <div class="row" style="gap:6px;margin-bottom:6px;">
-              <input id="edit-name" class="field dark" value="${esc(editDraft.name)}" oninput="onEditInput(this,'name')" onkeydown="handleEditKey(event)" style="flex:1;" />
-              <input id="edit-alliance" class="field dark" placeholder="Alliance" value="${esc(editDraft.alliance)}" oninput="onEditInput(this,'alliance')" onkeydown="handleEditKey(event)" style="width:90px;" />
-              <input id="edit-march" class="field dark" placeholder="secs" value="${esc(editDraft.march)}" oninput="onEditInput(this,'march')" onkeydown="handleEditKey(event)" style="width:64px;" />
+              <input id="edit-name" class="field dark" aria-label="Member name" value="${esc(editDraft.name)}" oninput="onEditInput(this,'name')" onkeydown="handleEditKey(event)" style="flex:1;" />
+              <input id="edit-alliance" class="field dark" aria-label="Alliance" placeholder="Alliance" value="${esc(editDraft.alliance)}" oninput="onEditInput(this,'alliance')" onkeydown="handleEditKey(event)" style="width:90px;" />
+              <input id="edit-march" class="field dark" aria-label="March time in seconds" placeholder="secs" value="${esc(editDraft.march)}" oninput="onEditInput(this,'march')" onkeydown="handleEditKey(event)" style="width:64px;" />
             </div>
             <div class="row" style="gap:6px;justify-content:flex-end;">
               <button class="btn" onclick="cancelEdit()" style="background:none;border:1px solid #2A3330;border-radius:6px;color:#8A948F;padding:5px 10px;font-size:12px;">Cancel</button>
@@ -808,14 +874,16 @@ function render() {
     });
 
     html += `</div>
-      <div class="row" style="gap:6px;">
-        <input id="name-${team}" class="field" placeholder="Name" value="${esc(draft[team].name)}" oninput="onDraftInput(this,'${team}','name')" onkeydown="handleEnter(event,'${team}')" style="flex:1;" />
-        <input id="alliance-${team}" class="field" placeholder="Alliance" value="${esc(draft[team].alliance)}" oninput="onDraftInput(this,'${team}','alliance')" onkeydown="handleEnter(event,'${team}')" style="width:105px;" />
-        <input id="march-${team}" class="field" placeholder="secs / mm:ss" inputmode="text" value="${esc(draft[team].march)}" oninput="onDraftInput(this,'${team}','march')" onkeydown="handleEnter(event,'${team}')" style="width:88px;" />
+      <div class="member-add-row">
+        <input id="name-${team}" class="field" aria-label="${meta.label} member name" placeholder="Name" value="${esc(draft[team].name)}" oninput="onDraftInput(this,'${team}','name')" onkeydown="handleEnter(event,'${team}')" style="flex:1;" />
+        <input id="alliance-${team}" class="field" aria-label="${meta.label} alliance" placeholder="Alliance" value="${esc(draft[team].alliance)}" oninput="onDraftInput(this,'${team}','alliance')" onkeydown="handleEnter(event,'${team}')" style="width:105px;" />
+        <input id="march-${team}" class="field" aria-label="${meta.label} march time in seconds or minutes and seconds" placeholder="secs / mm:ss" inputmode="text" value="${esc(draft[team].march)}" oninput="onDraftInput(this,'${team}','march')" onkeydown="handleEnter(event,'${team}')" style="width:88px;" />
         <button class="btn" onclick="addPerson('${team}')" style="background:#1D2523;border:1px solid #2A3330;border-radius:6px;padding:8px 10px;color:${meta.accent};font-size:16px;">+</button>
       </div>
     </div>`;
   });
+
+  html += `</div>`;
 
   if (pendingDelete) {
     html += `<div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;">
@@ -830,6 +898,7 @@ function render() {
   }
 
   document.getElementById("root").innerHTML = html;
+  restoreFocus(focusSnapshot);
 }
 
 // ---- targeted fast timer updates ----
@@ -854,20 +923,15 @@ function tickTimers() {
   }
 
   document.querySelectorAll(".js-rally-card").forEach(card => {
-    const isScheduled = card.dataset.isScheduled === "true";
-    const startAt = Number(card.dataset.startAt);
-    const hitTime = Number(card.dataset.hitTime);
-
-    const hitRemaining = (hitTime - now) / 1000;
-    const hasHit = hitRemaining <= 0;
-    const secsUntilStart = isScheduled ? (startAt - now) / 1000 : 0;
-
-    const imminent = !isScheduled && !hasHit && hitRemaining <= 10;
-    const imminentStart = isScheduled && secsUntilStart <= 10;
+    const rallyId = Number(card.dataset.id);
+    const rally = rallies.find(r => r.id === rallyId);
+    if (!rally) return;
+    const timer = getRallyTimerState(rally, now);
+    const { isScheduled, rallyRemaining, hitRemaining, hasHit, imminent, secsUntilStart, imminentStart } = timer;
 
     card.classList.toggle("imminent", imminent);
     card.classList.toggle("imminent-start", imminentStart);
-    const borderCol = hasHit ? "#E1594F" : "#1D2523";
+    const borderCol = timer.borderColor;
     card.style.borderTopColor = borderCol;
     card.style.borderRightColor = borderCol;
     card.style.borderBottomColor = borderCol;
@@ -879,43 +943,39 @@ function tickTimers() {
 
     const rallyEl = card.querySelector(".js-timer-rally");
     if (rallyEl) {
-      const elapsed = (now - startAt) / 1000;
-      const rallyRemaining = RALLY_BUFFER - elapsed;
-      const rallyDone = rallyRemaining <= 0;
-      rallyEl.textContent = rallyDone ? "0:00" : fmtMMSS(rallyRemaining);
-      rallyEl.style.color = rallyDone ? "#3E4A46" : "#8A948F";
+      rallyEl.textContent = timer.rallyDone ? "0:00" : fmtMMSS(rallyRemaining);
+      rallyEl.style.color = timer.rallyColor;
     }
 
     const hitEl = card.querySelector(".js-timer-hit");
     if (hitEl) {
       hitEl.textContent = hasHit ? "HIT" : fmtMMSS(hitRemaining);
-      hitEl.style.color = hasHit ? "#E1594F" : "#F2A93B";
+      hitEl.style.color = timer.hitColor;
     }
   });
 
   document.querySelectorAll(".js-timer-sync").forEach(el => {
     const targetTs = Number(el.dataset.targetTs);
-    const secs = (targetTs - now) / 1000;
-    const late = secs < -1;
-    const startNow = secs >= -1 && secs <= 0;
+    const state = getCountdownState(targetTs, now);
+    const { secs, late, startNow } = state;
     el.textContent = startNow ? "now" : fmtMMSS(secs);
     el.style.color = late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F";
   });
 
   document.querySelectorAll(".js-timer-sync-follow").forEach(el => {
     const targetTs = Number(el.dataset.targetTs);
-    const secs = (targetTs - now) / 1000;
-    const followLate = secs < -1;
-    const followStartNow = secs >= -1 && secs <= 0;
+    const state = getCountdownState(targetTs, now);
+    const { secs } = state;
+    const followLate = state.late;
+    const followStartNow = state.startNow;
     el.textContent = followStartNow ? "now" : fmtMMSS(secs);
     el.style.color = followLate ? "#E1594F" : followStartNow ? "#3FD6C7" : "#8A948F";
   });
 
   document.querySelectorAll(".js-timer-group-start").forEach(el => {
     const targetTs = Number(el.dataset.targetTs);
-    const secs = (targetTs - now) / 1000;
-    const late = secs < -1;
-    const startNow = secs >= -1 && secs <= 0;
+    const state = getCountdownState(targetTs, now);
+    const { secs, late, startNow } = state;
     el.textContent = startNow ? "now" : fmtMMSS(secs);
     el.style.color = late ? "#E1594F" : startNow ? "#F2A93B" : "#8A948F";
   });
