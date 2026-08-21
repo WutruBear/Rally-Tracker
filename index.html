@@ -504,7 +504,7 @@ function render() {
     <div class="display" style="font-size:14px;color:#8A948F;margin-bottom:10px;text-transform:uppercase;">Incoming (${activeSorted.length})</div>`;
 
   if (activeSorted.length === 0) {
-    html += `<div style="padding:18px 14px;background:#121815;border:1px dashed #262E2B;border-radius:8px;color:#5A6560;font-size:13px;">No active rallies. Start one below.</div>`;
+    html += `<div style="padding:18px 14px;background:#121815;border:1px dashed #262E2B;border-radius:8px;color:#5A6560;font-size:13px;">No active rallies.</div>`;
   }
 
   html += `<div style="display:flex;flex-direction:column;gap:8px;">`;
@@ -687,17 +687,17 @@ function render() {
     const maxMarch = sortedMembers[0].marchTime;
     const memberDetails = sortedMembers.map(p => {
       const delay = maxMarch - p.marchTime;
-      if (delay === 0) return `${p.name} (initiate)`;
+      if (delay === 0) return `${p.name}`;
       const delayStr = delay >= 60 ? fmtMMSS(delay) : `${delay}s`;
       return `${p.name} (+${delayStr})`;
-    }).join(", ");
+    }).join(" → ");
 
     let launchSummary = "";
     if (g.mode === "target" && targetTs) {
       launchSummary = `Target: UTC ${fmtClockUTC(new Date(targetTs))}`;
     } else if (g.mode === "now") {
       const delay = Number(g.launchDelay) || 0;
-      launchSummary = delay > 0 ? `Start delay: +${fmtMMSS(delay)}` : "Start delay: 0s";
+      launchSummary = delay > 0 ? `Start delay: +${fmtMMSS(delay)}` : "Start immediately";
     } else {
       launchSummary = "Target: Set time";
     }
