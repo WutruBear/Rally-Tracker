@@ -486,8 +486,13 @@ function render() {
     if (!keep) delete expanded[x.id];
     return keep;
   });
-  const sortKey = r => (r.startAt && now < r.startAt) ? r.startAt : r.hitTime;
-  const activeSorted = [...rallies].sort((a, b) => sortKey(a) - sortKey(b));
+  const activeSorted = [...rallies].sort((a, b) => {
+    const diff = a.hitTime - b.hitTime;
+    if (diff !== 0) return diff;
+    // Same hit time (e.g. synced group): the rally that started earlier
+    // has been marching longer, so it goes on top.
+    return (a.startAt || 0) - (b.startAt || 0);
+  });
 
   let html = "";
 
