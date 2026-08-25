@@ -1,0 +1,83 @@
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; background: #0B0F0E; color: #E8ECE9;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+}
+.mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; }
+.display { font-weight: 700; letter-spacing: 0.04em; }
+input::placeholder { color: #4A5450; }
+input, button, select { font-family: inherit; }
+
+@keyframes pulseRed {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(225,89,79,0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(225,89,79,0); }
+}
+@keyframes pulseAmber {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(242,169,59,0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(242,169,59,0); }
+}
+.imminent { animation: pulseRed 1.2s infinite; }
+.imminent-start { animation: pulseAmber 1.2s infinite; }
+
+.row { display: flex; align-items: center; }
+.btn { cursor: pointer; }
+.card { background: #121815; border: 1px solid #1D2523; border-radius: 8px; padding: 10px 12px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+.sync-toggle {
+  display: flex; align-items: center; gap: 6px; margin-top: 8px; background: none;
+  border: none; color: #6B7570; cursor: pointer; font-size: 11.5px; padding: 4px 0 0;
+  font-family: inherit; text-align: left;
+}
+.group-toggle {
+  display: flex; align-items: center; background: none; border: none; color: inherit;
+  cursor: pointer; font: inherit; text-align: left; padding: 0; flex: 1; min-width: 0;
+}
+.member-option { margin: 0; flex-shrink: 0; accent-color: #3FD6C7; }
+.sync-grid { display: grid; column-gap: 8px; row-gap: 5px; }
+
+.adjbtn {
+  background: #1D2523; border: 1px solid #2A3330; border-radius: 4px; color: #8A948F;
+  cursor: pointer; font-size: 10px; font-weight: 700; min-width: 26px; height: 18px; line-height: 1; padding: 0 3px;
+}
+.field {
+  background: #121815; border: 1px solid #1D2523; border-radius: 6px; padding: 8px 10px;
+  color: #E8ECE9; font-size: 13px; outline: none;
+}
+.field.dark { background: #0B0F0E; border-color: #2A3330; padding: 6px 8px; }
+.pill {
+  background: #1D2523; border: 1px solid #2A3330; border-radius: 14px; color: #8A948F;
+  cursor: pointer; font-size: 11px; font-weight: 600; padding: 5px 12px;
+}
+.pill.active { background: #3FD6C7; color: #0B0F0E; border-color: #3FD6C7; }
+
+.roster-teams { display: grid; grid-template-columns: 1fr; }
+.member-add-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 105px 88px auto; gap: 6px; }
+.member-add-row .field { width: 100% !important; min-width: 0; }
+.member-add-row button { min-width: 0; }
+@media (min-width: 760px) { .roster-teams { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+@media (max-width: 520px) {
+  .member-add-row { grid-template-columns: minmax(0, 1fr) 90px 76px auto; }
+}
+
+.header-bar { border-bottom: 1px solid #1D2523; padding: 20px 16px; gap: 10px; }
+.section { padding: 16px; }
+.section-title { font-size: 14px; color: #8A948F; margin-bottom: 10px; text-transform: uppercase; }
+.empty-state { padding: 18px 14px; background: #121815; border: 1px dashed #262E2B; border-radius: 8px; color: #5A6560; font-size: 13px; }
+.list-col { display: flex; flex-direction: column; gap: 8px; }
+
+.icon-btn { background: none; border: none; color: #4A5450; padding: 4px; font-size: 16px; cursor: pointer; }
+.small-label { font-size: 9px; color: #5A6560; letter-spacing: 0.06em; }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex;
+  align-items: center; justify-content: center; padding: 16px; z-index: 50;
+}
+.modal-card { background: #121815; border: 1px solid #2A3330; border-radius: 10px; padding: 18px; max-width: 380px; width: 100%; }
+
+.toast {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  padding: 10px 16px; border-radius: 8px; font-size: 13px; z-index: 60;
+}
+.toast.ok { background: #16332C; color: #3FD6C7; border: 1px solid #1E4A3F; }
+.toast.error { background: #33201D; color: #E1594F; border: 1px solid #4A2A25; }
