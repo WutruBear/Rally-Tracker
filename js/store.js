@@ -1,4 +1,4 @@
-import { signal, computed, batch } from "https://esm.sh/@preact/signals@1?deps=preact@10";
+import { signal, computed, batch } from "./reactive.js";
 import * as storage from "./storage.js";
 import { RALLY_BUFFER, buildRally, planGroupLaunch, sortRallies, parseMarchInput, fmtClockUTC } from "./model.js";
 

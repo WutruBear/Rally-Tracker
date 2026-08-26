@@ -17,9 +17,8 @@ npx http-server -c-1 .
 python3 -m http.server 8080
 ```
 
-Then open the printed URL. The app loads Preact, Preact Signals, htm, and
-idb-keyval from esm.sh at runtime — an internet connection is required the
-first time each is fetched (the browser caches them after that).
+Then open the printed URL. Preact, htm, and idb-keyval are bundled locally
+in `js/vendor/` — no CDN calls at runtime, so it works offline too.
 
 ## Running the tests
 
@@ -34,7 +33,11 @@ npm test
 ## Hosting on GitHub Pages
 
 1. Push this folder to a GitHub repository (root of the repo, or a `/docs`
-   folder — either works).
+   folder — either works). Make sure the empty `.nojekyll` file at the top
+   of this folder is included — GitHub Pages runs a Jekyll build by default,
+   and without `.nojekyll` it will try to process this as a Jekyll site and
+   fail (it chokes on `README.md` via the `jekyll-readme-index` plugin).
+   `.nojekyll` tells Pages to skip that and serve the files as-is.
 2. In the repo, go to **Settings → Pages**.
 3. Under "Build and deployment", choose **Deploy from a branch**, pick your
    branch, and the folder you pushed it to (`/` or `/docs`).
@@ -47,15 +50,18 @@ served as-is.
 ## Project structure
 
 ```
-index.html              entry point, loads css + js/app.js as a module
-css/styles.css           all styling
-js/model.js              pure domain logic (parsing, timers, sorting) — unit tested
-js/storage.js            IndexedDB persistence w/ localStorage fallback, versioned schema
-js/store.js              reactive app state (Preact Signals) + actions
-js/preact-setup.js       single place pinning the Preact/htm CDN versions
-js/App.js, js/app.js     root component + mount
-js/components/*.js       Header, RosterPanel, IncomingList, RallyCard, GroupsPanel, DeleteModal
-tests/model.test.js      unit tests (node --test)
+index.html               entry point, loads css + js/app.js as a module
+css/styles.css            all styling
+js/model.js               pure domain logic (parsing, timers, sorting) — unit tested
+js/storage.js             IndexedDB persistence w/ localStorage fallback, versioned schema
+js/reactive.js            tiny dependency-free store primitive (signal/computed/batch + subscribe)
+js/store.js               app state (built on reactive.js) + actions
+js/preact-setup.js        re-exports from the local vendor bundle (see below)
+js/vendor/preact-bundle.js      Preact + hooks + htm, bundled locally with esbuild
+js/vendor/idb-keyval-bundle.js  idb-keyval, bundled locally with esbuild
+js/App.js, js/app.js      root component + mount
+js/components/*.js        Header, RosterPanel, IncomingList, RallyCard, GroupsPanel, DeleteModal
+tests/model.test.js       unit tests (node --test)
 ```
 
 ## What changed from the original single-file version
@@ -63,9 +69,10 @@ tests/model.test.js      unit tests (node --test)
 - **Rendering**: the old version rebuilt one big HTML string and diffed the
   DOM by hand (`captureFocus`/`restoreFocus` to avoid losing cursor position,
   a separate `tickTimers()` path duplicating the render logic just to avoid
-  a full re-render every second). This version uses Preact + Signals: each
-  component subscribes only to the state it reads, so a running countdown
-  updates just its own text node — no manual focus juggling, no second
+  a full re-render every second). This version uses Preact: state lives in
+  a small dependency-free store (`js/reactive.js`), and the app root
+  re-renders the whole tree on any change — Preact's own diffing keeps the
+  actual DOM writes cheap, so there's no manual focus juggling and no second
   render path to keep in sync with the first.
 - **State machine**: rally status (`scheduled` / `marching` / `hit`) is a
   pure function of timestamps (`rallyPhase()` in `model.js`) instead of an
@@ -85,11 +92,19 @@ tests/model.test.js      unit tests (node --test)
 - **New, small**: Export/Import JSON backup (top-right of the header), since
   it fell out naturally once storage had a clean save/load boundary.
 
-## Known limitation of this rebuild
+## Note on an earlier version
 
-Because this environment's network access is locked to a small domain
-allowlist, I could syntax-check every module and unit-test all the pure
-logic here, but I could **not** load the app end-to-end in a real browser
-against the esm.sh CDN from this sandbox. Please do a quick smoke test after
-your first deploy (add a person, start a rally, launch a 2+ person sync
-group) — if anything's off, tell me what you saw and I'll fix it fast.
+An earlier draft of this rebuild loaded Preact and `@preact/signals` from
+two separate CDN URLs at runtime. That's what caused the black screen you
+hit: `@preact/signals`'s auto-re-render mechanism only works if it patches
+the *exact same* Preact module instance the app renders with, which two
+independently-resolved CDN requests don't reliably guarantee — and my
+sandbox's network is locked to a small domain allowlist that doesn't
+include that CDN, so I wasn't able to catch it by testing before handing
+it to you. This version removes that entire risk: Preact, its hooks, htm,
+and idb-keyval are all bundled into two local files under `js/vendor/`
+(built with esbuild from the real npm packages), so there's exactly one
+copy of each loaded, and it works without any CDN at all. I also verified
+this version end-to-end with jsdom (mount, add a person, start a rally,
+confirm it renders) before sending it to you — still worth a quick sanity
+check on your end after deploying, but this should be solid.

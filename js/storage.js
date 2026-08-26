@@ -20,7 +20,7 @@ async function getIdb() {
   if (idbFailed) return null;
   if (idbKeyval) return idbKeyval;
   try {
-    idbKeyval = await import("https://esm.sh/idb-keyval@6");
+    idbKeyval = await import("./vendor/idb-keyval-bundle.js");
     return idbKeyval;
   } catch (e) {
     console.warn("[storage] idb-keyval unavailable, falling back to localStorage:", e);
