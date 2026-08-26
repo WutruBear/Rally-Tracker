@@ -13,21 +13,9 @@ const DB_NAME = "rally-tracker";
 const STORE = "kv";
 const CURRENT_SCHEMA_VERSION = 1;
 
-let idbKeyval = null;
-let idbFailed = false;
+import * as idbKeyval from "./vendor/idb-keyval-bundle.js";
 
-async function getIdb() {
-  if (idbFailed) return null;
-  if (idbKeyval) return idbKeyval;
-  try {
-    idbKeyval = await import("./vendor/idb-keyval-bundle.js");
-    return idbKeyval;
-  } catch (e) {
-    console.warn("[storage] idb-keyval unavailable, falling back to localStorage:", e);
-    idbFailed = true;
-    return null;
-  }
-}
+let idbBroken = false;
 
 function lsGet(key, fallback) {
   try {
@@ -46,26 +34,26 @@ function lsSet(key, value) {
 }
 
 export async function get(key, fallback) {
-  const idb = await getIdb();
-  if (idb) {
+  if (!idbBroken) {
     try {
-      const v = await idb.get(key, undefined);
+      const v = await idbKeyval.get(key);
       return v === undefined ? fallback : v;
     } catch (e) {
-      console.warn("[storage] idb get failed, falling back:", e);
+      console.warn("[storage] idb get failed, falling back to localStorage:", e);
+      idbBroken = true;
     }
   }
   return lsGet(key, fallback);
 }
 
 export async function set(key, value) {
-  const idb = await getIdb();
-  if (idb) {
+  if (!idbBroken) {
     try {
-      await idb.set(key, value);
+      await idbKeyval.set(key, value);
       return;
     } catch (e) {
-      console.warn("[storage] idb set failed, falling back:", e);
+      console.warn("[storage] idb set failed, falling back to localStorage:", e);
+      idbBroken = true;
     }
   }
   lsSet(key, value);

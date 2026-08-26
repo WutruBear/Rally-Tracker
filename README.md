@@ -30,38 +30,92 @@ plain Node:
 npm test
 ```
 
-## Hosting on GitHub Pages
+## Hosting on GitHub Pages — the git way
 
-1. Push this folder to a GitHub repository (root of the repo, or a `/docs`
-   folder — either works). Make sure the empty `.nojekyll` file at the top
-   of this folder is included — GitHub Pages runs a Jekyll build by default,
-   and without `.nojekyll` it will try to process this as a Jekyll site and
-   fail (it chokes on `README.md` via the `jekyll-readme-index` plugin).
-   `.nojekyll` tells Pages to skip that and serve the files as-is.
-2. In the repo, go to **Settings → Pages**.
-3. Under "Build and deployment", choose **Deploy from a branch**, pick your
-   branch, and the folder you pushed it to (`/` or `/docs`).
-4. Save. GitHub gives you a URL like
-   `https://<username>.github.io/<repo>/` within a minute or two.
+This walks through pushing with the actual `git` command line instead of the
+web upload UI. The web uploader is what caused the last two failed deploys
+(it silently drops nested folders like `js/vendor/`, and it can't warn you
+about the filesystem case-collision that ate `js/main.js`) — `git` doesn't
+have either problem, because it hashes and tracks every file's exact bytes,
+not just what a file browser shows you.
 
-No GitHub Actions workflow is needed since there's no build step — it's
-served as-is.
+**0. Get the files onto your machine as a real folder**, not just wherever
+your zip tool extracted them. Unzip this project somewhere you can find it
+in a terminal, e.g. `~/projects/rally-tracker`.
+
+**1. Install git**, if you don't already have it: [git-scm.com/downloads](https://git-scm.com/downloads).
+Confirm it worked:
+```
+git --version
+```
+
+**2. Open a terminal in the project folder.**
+```
+cd ~/projects/rally-tracker
+```
+(On Windows, Git Bash — installed alongside git — is the easiest terminal
+for these commands.)
+
+**3. Turn the folder into a git repository and commit everything.**
+```
+git init
+git add .
+git status
+```
+Look at the output of `git status` before committing — it lists every file
+git is about to track. This is your chance to actually verify `js/vendor/`,
+`js/main.js`, and `js/AppRoot.js` are all in there, instead of finding out
+after pushing like last time.
+```
+git commit -m "Initial commit"
+```
+
+**4. Create an empty repository on GitHub** (github.com → the "+" in the top
+right → New repository). Give it a name, and **don't** check "Add a
+README" or any other initialize option — you want it completely empty so
+your first push isn't fighting an unrelated history.
+
+**5. Connect your local repo to it and push.** GitHub shows you the exact
+commands right after creating the repo, but they look like this:
+```
+git remote add origin https://github.com/<your-username>/<repo-name>.git
+git branch -M main
+git push -u origin main
+```
+
+**6. Verify what actually landed**, before touching Pages settings at all.
+Go to `github.com/<your-username>/<repo-name>` in a browser and click into
+`js/vendor/` — confirm `preact-bundle.js` and `idb-keyval-bundle.js` are
+really there. This one check would have caught both previous failures
+immediately.
+
+**7. Turn on Pages.** Settings → Pages → under "Build and deployment", set
+Source to **GitHub Actions**. This repo already includes
+`.github/workflows/deploy.yml`, which deploys automatically on every push
+to `main` — no manual "which branch, which folder" dropdown to get wrong.
+The Actions tab shows you the deploy running; when it's green, your site is
+live at `https://<your-username>.github.io/<repo-name>/`.
+
+**From now on**, any time you change a file: `git add .`, `git commit -m
+"..."`, `git push` — and the site redeploys itself in about a minute.
 
 ## Project structure
 
 ```
-index.html               entry point, loads css + js/app.js as a module
-css/styles.css            all styling
-js/model.js               pure domain logic (parsing, timers, sorting) — unit tested
-js/storage.js             IndexedDB persistence w/ localStorage fallback, versioned schema
-js/reactive.js            tiny dependency-free store primitive (signal/computed/batch + subscribe)
-js/store.js               app state (built on reactive.js) + actions
-js/preact-setup.js        re-exports from the local vendor bundle (see below)
+index.html                      entry point, loads css + js/main.js as a module
+.github/workflows/deploy.yml    auto-deploys to Pages on every push to main
+css/styles.css                  all styling
+js/model.js                     pure domain logic (parsing, timers, sorting) — unit tested
+js/storage.js                   IndexedDB persistence w/ localStorage fallback, versioned schema
+js/reactive.js                  tiny dependency-free store primitive (signal/computed/batch + subscribe)
+js/store.js                     app state (built on reactive.js) + actions
+js/preact-setup.js              re-exports from the local vendor bundle (see below)
 js/vendor/preact-bundle.js      Preact + hooks + htm, bundled locally with esbuild
 js/vendor/idb-keyval-bundle.js  idb-keyval, bundled locally with esbuild
-js/App.js, js/app.js      root component + mount
-js/components/*.js        Header, RosterPanel, IncomingList, RallyCard, GroupsPanel, DeleteModal
-tests/model.test.js       unit tests (node --test)
+js/AppRoot.js, js/main.js       root component + mount (named to avoid any app.js/App.js
+                                 case collision on case-insensitive filesystems)
+js/components/*.js              Header, RosterPanel, IncomingList, RallyCard, GroupsPanel, DeleteModal
+tests/model.test.js             unit tests (node --test)
 ```
 
 ## What changed from the original single-file version
@@ -92,19 +146,27 @@ tests/model.test.js       unit tests (node --test)
 - **New, small**: Export/Import JSON backup (top-right of the header), since
   it fell out naturally once storage had a clean save/load boundary.
 
-## Note on an earlier version
+## Note on earlier deploy attempts
 
-An earlier draft of this rebuild loaded Preact and `@preact/signals` from
-two separate CDN URLs at runtime. That's what caused the black screen you
-hit: `@preact/signals`'s auto-re-render mechanism only works if it patches
-the *exact same* Preact module instance the app renders with, which two
-independently-resolved CDN requests don't reliably guarantee — and my
-sandbox's network is locked to a small domain allowlist that doesn't
-include that CDN, so I wasn't able to catch it by testing before handing
-it to you. This version removes that entire risk: Preact, its hooks, htm,
-and idb-keyval are all bundled into two local files under `js/vendor/`
-(built with esbuild from the real npm packages), so there's exactly one
-copy of each loaded, and it works without any CDN at all. I also verified
-this version end-to-end with jsdom (mount, add a person, start a rally,
-confirm it renders) before sending it to you — still worth a quick sanity
-check on your end after deploying, but this should be solid.
+Two things broke the first two attempts to deploy this, both about *upload
+mechanics*, not the app code:
+
+1. An early version loaded Preact from a CDN at runtime; two separately
+   resolved CDN URLs didn't reliably share one Preact instance, so nothing
+   ever re-rendered. Fixed by vendoring Preact/htm/idb-keyval locally with
+   esbuild (`js/vendor/`) — no CDN calls at runtime at all.
+2. The project originally had both `js/app.js` (entry point) and
+   `js/App.js` (root component) — genuinely different files, differing only
+   in case. On a case-insensitive filesystem (default on Mac/Windows) or
+   through some upload paths, those collide into one file, silently
+   dropping whichever didn't survive. Renamed to `js/main.js` and
+   `js/AppRoot.js` so no two files in this project ever differ only in
+   case, and separately, `js/vendor/` — a nested folder — didn't make it
+   through a web-based drag-and-drop upload at all. The git workflow above
+   avoids both: git tracks exact file identity regardless of case, and `git
+   status` before committing shows you exactly what's about to be pushed.
+
+I verified this version end-to-end with a headless browser (jsdom): mount,
+add two roster members, start a rally, confirm it renders — before handing
+it to you. Still worth a real-browser check after your first deploy, but
+this should be solid.

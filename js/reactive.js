@@ -7,7 +7,7 @@
 // When that happens, signals' automatic "re-render on change" hook attaches
 // to a Preact instance that isn't the one actually rendering your tree, and
 // nothing updates — silently. Keeping this store's only dependency being the
-// app's own root re-render (see App.js) sidesteps that failure mode
+// app's own root re-render (see AppRoot.js) sidesteps that failure mode
 // entirely: it only needs to notify subscribers, and App owns the one
 // subscription that matters.
 // ---------------------------------------------------------------------------
